@@ -5,13 +5,13 @@ import "fmt"
 type Hit struct {
 	begin    int
 	end      int
-	value    *Word
+	value    interface{}
 }
 
-func NewHit(begin, end int, w *Word) *Hit {
-	return &Hit{begin:begin, end: end, value: w}
+func NewHit(begin, end int, v interface{}) *Hit {
+	return &Hit{begin:begin, end: end, value: v}
 }
 
 func (h *Hit)String() string {
-	return fmt.Sprintf("[%d:%d]=%s", h.begin, h.end, h.value)
+	return fmt.Sprintf("[%d:%d]=%v", h.begin, h.end, h.value)
 }

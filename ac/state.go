@@ -1,18 +1,18 @@
 package ac
 
-import "github.com/heidawei/AhoCorasickDoubleArrayTrie/util"
-
 type State struct {
 	// 模式串的长度，也是这个状态的深度
 	depth   int
+	code    int
 	// fail函数，如果没有匹配到，则跳转到此状态
 	failure_ *State
 
 	// 只要这个状态可达，则记录模式串
-	emits   *util.TreeSet
+	emits   *TreeSet
 
 	success map[rune]*State
-    index util.Int
+	// 在base中的索引
+    index int
 }
 
 func NewState(depth int) *State {
@@ -25,22 +25,24 @@ func (s *State)getDepth()int {
 }
 
 // 添加一个匹配的模式串(这个状态对应着这个模式串)
-func (s *State)addEmit(keyword util.Int) {
+func (s *State)addEmit(keyword int) {
 	if s.emits == nil {
-		s.emits = util.NewTreeSet()
+		s.emits = NewTreeSet()
 	}
 	s.emits.Add(keyword)
 }
 
-func (s *State) getLargestValueId() util.Int {
+func (s *State) getLargestValueId() int {
 	if s.emits == nil || s.emits.Size() == 0 {
 		return 0
 	}
-	return s.emits.Iterator().Next()
+	return s.emits.Max()
 }
 
-func (s *State)addEmits(emits util.Collection) {
-
+func (s *State)addEmits(emits []int) {
+	for _, e := range emits {
+		s.addEmit(e)
+	}
 }
 
 func (s *State) isAcceptable() bool {
@@ -51,7 +53,7 @@ func (s *State) failure() *State {
 	return s.failure_
 }
 
-func (s *State) setFailure(failState *State, fail []util.Int) {
+func (s *State) setFailure(failState *State, fail []int) {
 	s.failure_ = failState
 	fail[s.index] = failState.index
 }
@@ -81,14 +83,57 @@ func (s *State) addState(c rune) *State {
 	return nextState
 }
 
+func (s *State)getStates() []*State {
+	var states []*State
+	for _, e := range s.success {
+		states = append(states, e)
+	}
+	return states
+}
+
+func (s *State)getTransitions()[]rune {
+	var ts []rune
+	for k, _ := range s.success {
+		ts = append(ts, k)
+	}
+	return ts
+}
+
 func (s *State) getSuccess() map[rune]*State{
 	return s.success
 }
 
-func (s *State) getIndex() util.Int {
+func (s *State) getIndex() int {
 	return s.index
 }
 
-func (s *State) setIndex(index util.Int) {
+func (s *State) setIndex(index int) {
 	s.index = index
 }
+
+type ListState struct {
+	size_   int
+	states  []*State
+}
+
+func NewListState() *ListState {
+	return &ListState{size_: 0}
+}
+
+func (l *ListState) size() int {
+	return l.size_
+}
+
+// TODO check index > size
+func (l *ListState) get(index int) *State {
+	if index < 0 {
+		return nil
+	}
+	return l.states[index]
+}
+
+func (l *ListState) add(s *State) {
+	l.states = append(l.states, s)
+	l.size_++
+}
+

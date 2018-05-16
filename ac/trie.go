@@ -11,36 +11,12 @@ type Node struct {
 	depth int
 	left int
 	right int
+
+	state *State
 }
 
 func (n *Node) String() string {
 	return fmt.Sprintf("node code %d depth %d left %d right %d", n.code, n.depth, n.left, n.right)
-}
-
-type ListNode struct {
-	size_   int
-	nodes  []*Node
-}
-
-func NewListNode() *ListNode {
-	return &ListNode{size_: 0}
-}
-
-func (l *ListNode) size() int {
-	return l.size_
-}
-
-// TODO check index > size
-func (l *ListNode) get(index int) *Node {
-	if index < 0 {
-		return nil
-	}
-	return l.nodes[index]
-}
-
-func (l *ListNode) add(node *Node) {
-	l.nodes = append(l.nodes, node)
-	l.size_++
 }
 
 type Word struct {
@@ -119,27 +95,133 @@ func (d *WordCodeDict) Code(word rune) int {
 	return d.nextCode
 }
 
-type DoubleArrayTrie struct {
+type AhoCorasickDoubleArrayTrie struct {
 	base   []int
 	check  []int
 	used   []bool
 	size   int
 	allocSize int
-	key    []*Word
+	nextCheckPos int
 	keySize int
-	length []int
-	value  []int
+	progress int
+	error_ int
+	// length of every key
+	l       []int
+	key    []*Word
+	value  []interface{}
 	// fail table of the Aho Corasick automata
 	fail   []int
 	// output table of the Aho Corasick automata
-	ouput  [][]int
-	progress int
-	nextCheckPos int
-	error_  int
+	output  [][]int
 	wordCodeDict *WordCodeDict
 }
 
-func (dat *DoubleArrayTrie)resize(newSize int) int {
+func (act *AhoCorasickDoubleArrayTrie) ParseText(key string) []*Hit {
+	var position int = 1
+	var curState int = 0
+	var collectedEmits = NewListHit()
+	text := NewWord(key)
+	for i := 0; i < text.Size(); i++ {
+		curState = act.getState(curState, text.GetRune(i))
+		act.storeEmits(position, curState, collectedEmits)
+		position++
+	}
+	return collectedEmits.ListArray()
+}
+
+func (act *AhoCorasickDoubleArrayTrie) ParseTextWithIter(key string, iter IHit) {
+	var position int = 1
+	var curState int = 0
+	text := NewWord(key)
+	for i := 0; i < text.Size(); i++ {
+		curState = act.getState(curState, text.GetRune(i))
+		hitArray := act.output[curState]
+		for _, hit := range hitArray {
+			iter(position - act.l[hit], position, act.value[hit])
+		}
+		position++
+	}
+}
+
+func (act *AhoCorasickDoubleArrayTrie) Matches(key string) bool {
+	var curState int = 0
+	text := NewWord(key)
+	for i := 0; i < text.Size(); i++ {
+		c := act.wordCodeDict.Code(text.GetRune(i))
+		curState = act.getState(curState, c)
+		hitArray := act.output[curState]
+		if hitArray != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (act *AhoCorasickDoubleArrayTrie) FindFirst(key string) *Hit {
+	var position int = 1
+	var curState int = 0
+	text := NewWord(key)
+	for i := 0; i < text.Size(); i++ {
+		c := act.wordCodeDict.Code(text.GetRune(i))
+		curState = act.getState(curState, c)
+		hitArray := act.output[curState]
+		for _, hit := range hitArray {
+			return NewHit(position - act.l[hit], position, act.value[hit])
+		}
+		position++
+	}
+	return nil
+}
+
+func (act *AhoCorasickDoubleArrayTrie) Get(key string) interface{} {
+	index := act.ExactMatchSearch(key)
+	if index >= 0 {
+		return act.value[index]
+	}
+	return nil
+}
+
+func(act *AhoCorasickDoubleArrayTrie) getState(currentState int, code int) int {
+	newCurrentState := act.transitionWithRoot(currentState, code)  // 先按success跳转
+	for newCurrentState == -1 {
+		currentState = act.fail[currentState]
+		newCurrentState = act.transitionWithRoot(currentState, code)
+	}
+	return newCurrentState
+}
+
+func(act *AhoCorasickDoubleArrayTrie) storeEmits(position int, currectState int, collectEmits *ListHit) {
+	hitArray := act.output[currectState]
+	for _, hit := range hitArray {
+		collectEmits.add(NewHit(position-act.l[hit], position, act.value[hit]))
+	}
+}
+
+func(act *AhoCorasickDoubleArrayTrie)transition(current int, c int) int {
+	b := current
+	p := b+c+1
+	if b == act.check[p] {
+		b = act.base[p]
+	} else {
+		return -1
+	}
+	p = b
+	return p
+}
+
+func (act *AhoCorasickDoubleArrayTrie) transitionWithRoot(nodePos int, c int) int {
+	b := act.base[nodePos]
+	p := b + c + 1
+	if b != act.check[p] {
+		if nodePos == 0 {
+			return 0
+		}
+		return -1
+	}
+	return p
+}
+
+func (dat *AhoCorasickDoubleArrayTrie)resize(newSize int) int {
 	fmt.Println("resize ", newSize)
 	base2 := make([]int, newSize)
 	check2 := make([]int, newSize)
@@ -157,7 +239,7 @@ func (dat *DoubleArrayTrie)resize(newSize int) int {
 	return newSize
 }
 
-func (dat *DoubleArrayTrie) fetch(parent *Node, siblings *ListNode) int {
+func (dat *AhoCorasickDoubleArrayTrie) fetch(parent *State, siblings *ListState) int {
 	if dat.error_ < 0 {
 		return 0
 	}
@@ -166,8 +248,8 @@ func (dat *DoubleArrayTrie) fetch(parent *Node, siblings *ListNode) int {
 	// if (dat.length != nil ? dat.length[i]:len(key[i]) < parent.depth)
 	for i := parent.left; i < parent.right; i++ {
 		// 非法单词过滤
-		if dat.length != nil {
-			if dat.length[i] != 0 {
+		if dat.l != nil {
+			if dat.l[i] != 0 {
 				continue
 			}
 		} else {
@@ -180,8 +262,8 @@ func (dat *DoubleArrayTrie) fetch(parent *Node, siblings *ListNode) int {
 
 		tmp := dat.key[i]
 		cur := 0
-		if dat.length != nil {
-			if dat.length[i] != 0 {
+		if dat.l != nil {
+			if dat.l[i] != 0 {
 				cur = dat.wordCodeDict.Code(tmp.GetRune(parent.depth)) + 1
 			}
 		} else {
@@ -208,17 +290,16 @@ func (dat *DoubleArrayTrie) fetch(parent *Node, siblings *ListNode) int {
 		//                           [nil(d=4,l=1,r=2)]
 		// 一个完整的单词最后一个结束节点的left,right与父节点保持一致
 		if cur != prev || siblings.size() == 0 {
-			tmp_node := new(Node)
-			tmp_node.depth = parent.depth + 1
-			tmp_node.code = cur
+			tmp := NewState(parent.depth + 1)
+			tmp.code = cur
 			// 左边界根据不同的前缀而不同
-			tmp_node.left = i
+			tmp.left = i
 			if siblings.size() != 0 {
 				// 新的节点要加入,前一个右节点的边界需要调整,与新节点的左边界相同
 				siblings.get(siblings.size() - 1).right = i
 			}
 
-			siblings.add(tmp_node)
+			siblings.add(tmp)
 		}
 
 		prev = cur
@@ -231,7 +312,7 @@ func (dat *DoubleArrayTrie) fetch(parent *Node, siblings *ListNode) int {
 	return siblings.size()
 }
 
-func (dat *DoubleArrayTrie) insert(siblings *ListNode) int {
+func (dat *AhoCorasickDoubleArrayTrie) insert(siblings *ListState) int {
 	if dat.error_ < 0 {
 		return 0
 	}
@@ -314,39 +395,22 @@ func (dat *DoubleArrayTrie) insert(siblings *ListNode) int {
 
 	// 计算所有子节点的base
 	for i := 0; i < siblings.size(); i++ {
-		new_siblings := NewListNode()
+		new_siblings := NewListState()
 		//// 一个词的终止且不为其他词的前缀，其实就是叶子节点
 		if dat.fetch(siblings.get(i), new_siblings) == 0 {
-			if dat.value != nil {
-				dat.base[begin+siblings.get(i).code] = dat.value[siblings.get(i).left - 1] * (-1) - 1
-			} else {
-				dat.base[begin+siblings.get(i).code] = siblings.get(i).left * (-1) - 1
-			}
-
-			if dat.value != nil && (dat.value[siblings.get(i).left] * (-1) - 1) >= 0 {
-				dat.error_ = -2
-				return 0
-			}
-
+			dat.base[begin+siblings.get(i).code] = siblings.get(i).left * (-1) - 1
 			dat.progress++
 		} else {
 			h := dat.insert(new_siblings)
 			dat.base[begin+siblings.get(i).code] = h
 		}
+		siblings.get(i).setIndex(begin + siblings.get(i).code)
 	}
 
 	return begin
 }
 
-func NewDoubleArrayTrie() *DoubleArrayTrie {
-	return &DoubleArrayTrie{}
-}
-
-func (dat *DoubleArrayTrie) clear() {
-	*dat = DoubleArrayTrie{}
-}
-
-func (dat *DoubleArrayTrie) loseWeight() {
+func (dat *AhoCorasickDoubleArrayTrie) loseWeight() {
 	base2 := make([]int, dat.size)
 	check2 := make([]int, dat.size)
 
@@ -360,11 +424,11 @@ func (dat *DoubleArrayTrie) loseWeight() {
 	return
 }
 
-func (dat *DoubleArrayTrie) GetSize() int {
+func (dat *AhoCorasickDoubleArrayTrie) GetSize() int {
 	return dat.size
 }
 
-func (dat *DoubleArrayTrie) GetNonzeroSize() int {
+func (dat *AhoCorasickDoubleArrayTrie) GetNonzeroSize() int {
 	result := 0
 	for i := 0; i< dat.size; i++ {
 		if dat.check[i] != 0 {
@@ -374,11 +438,11 @@ func (dat *DoubleArrayTrie) GetNonzeroSize() int {
 	return result
 }
 
-func (dat *DoubleArrayTrie) Build(_key []string) int {
+func (dat *AhoCorasickDoubleArrayTrie) Build(_key []string) int {
 	return dat.BuildAdvanced(_key, nil, nil, len(_key))
 }
 
-func (dat *DoubleArrayTrie) BuildAdvanced(_key []string, _length []int, _value []int, _keySize int) int {
+func (dat *AhoCorasickDoubleArrayTrie) BuildAdvanced(_key []string, _length []int, _value []interface{}, _keySize int) int {
 	if _keySize > len(_key) || _key == nil {
 		return 0
 	}
@@ -387,7 +451,7 @@ func (dat *DoubleArrayTrie) BuildAdvanced(_key []string, _length []int, _value [
 		words = append(words, NewWord(key))
 	}
 	dat.key = words
-	dat.length = _length
+	dat.l = _length
 	dat.keySize = _keySize
 	dat.value = _value
 	dat.progress = 0
@@ -399,13 +463,13 @@ func (dat *DoubleArrayTrie) BuildAdvanced(_key []string, _length []int, _value [
 	dat.base[0] = 1
 	dat.nextCheckPos = 0
 
-	root_node := new(Node)
-	root_node.left = 0
-	root_node.right = dat.keySize
-	root_node.depth = 0
+	root_state := NewState(0)
+	root_state.left = 0
+	root_state.right = dat.keySize
+	root_state.depth = 0
 
-	siblings := NewListNode()
-	dat.fetch(root_node, siblings)
+	siblings := NewListState()
+	dat.fetch(root_state, siblings)
 	dat.insert(siblings)
 
 	dat.key = nil
@@ -414,11 +478,11 @@ func (dat *DoubleArrayTrie) BuildAdvanced(_key []string, _length []int, _value [
 	return dat.error_
 }
 
-func (dat *DoubleArrayTrie) ExactMatchSearch(key string) int {
-	return dat.ExactMatchSearchAdvanced(key, 0, 0, 0)
+func (act *AhoCorasickDoubleArrayTrie) ExactMatchSearch(key string) int {
+	return act.ExactMatchSearchAdvanced(key, 0, 0, 0)
 }
 
-func (dat *DoubleArrayTrie) ExactMatchSearchAdvanced(key string, pos int, length int, nodePos int) int {
+func (act *AhoCorasickDoubleArrayTrie) ExactMatchSearchAdvanced(key string, pos int, length int, nodePos int) int {
 	word := NewWord(key)
 	if length <= 0 {
 		length = word.Size()
@@ -430,76 +494,26 @@ func (dat *DoubleArrayTrie) ExactMatchSearchAdvanced(key string, pos int, length
 	var result = -1
 
 	keyChars := word.GetRunes()
-	b := dat.base[nodePos]
+	b := act.base[nodePos]
 	var p int
 	for i := pos; i < length; i++ {
-		p = b + dat.wordCodeDict.Code(keyChars[i]) + 1
-		if b == dat.check[p] {
-			b = dat.base[p]
+		p = b + act.wordCodeDict.Code(keyChars[i]) + 1
+		if b == act.check[p] {
+			b = act.base[p]
 		} else {
 			return result
 		}
 	}
 
 	p = b
-	n := dat.base[p]
+	n := act.base[p]
 
-	if b == dat.check[p] && n < 0 {
+	if b == act.check[p] && n < 0 {
 		result = n * (-1) - 1
 	}
 	return result
 }
 
-func (dat *DoubleArrayTrie) CommonPrefixSearch(key string) []int {
-	return dat.CommonPrefixSearchAdvanced(key, 0, 0, 0)
-}
-
-func (dat *DoubleArrayTrie) CommonPrefixSearchAdvanced(key string, pos int, length int, nodePos int) []int {
-	word := NewWord(key)
-	if length <= 0 {
-		length = word.Size()
-	}
-	if nodePos <= 0 {
-		nodePos = 0
-	}
-
-	var result []int
-	keyChars := word.GetRunes()
-	b := dat.base[nodePos]
-	var n, p int
-
-	for i := pos; i < length; i++ {
-		p = b
-		n = dat.base[p]
-
-		if b == dat.check[p] && n < 0 {
-			result = append(result, (n * (-1) - 1))
-		}
-
-		p = b + dat.wordCodeDict.Code(keyChars[i]) + 1
-		if b == dat.check[p] {
-			b = dat.base[p]
-		} else {
-			return result
-		}
-	}
-
-	p = b
-	n = dat.base[p]
-
-	if b == dat.check[p] && n < 0 {
-		result = append(result, (n * (-1) - 1))
-	}
-	return result
-}
-
-func (dat *DoubleArrayTrie) Dump() {
-	for i := 0; i < dat.size; i++ {
-		fmt.Printf("i: %d", i)
-		fmt.Printf(" [%d", dat.base[i])
-		fmt.Printf(", %d]\n", dat.check[i])
-	}
-}
 
 type ByRune []rune
 func (a ByRune) Len() int           { return len(a) }
