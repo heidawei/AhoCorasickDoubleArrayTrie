@@ -21,14 +21,11 @@ func NewState(depth int, code int) *State {
 	return &State{depth: depth, code: code, success: make(map[rune]*State)}
 }
 
-func (s *State) String() {
-	fmt.Printf("STATE depth %d, code %d, index %d \n", s.depth, s.code, s.index)
-	fmt.Println("success: ==========")
-	for r, state := range s.success {
-		fmt.Printf("rune %d ", r)
-		state.String()
+func (s *State) String() string {
+	if s == nil {
+		return ""
 	}
-	fmt.Println("success: ++++++++++")
+	return fmt.Sprintf("{depth %d code %d failure[%s] index %d, sub size: %d}", s.depth, s.code, s.failure_, s.index, len(s.success))
 }
 
 func (s *State)getDepth()int {

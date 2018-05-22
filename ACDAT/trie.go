@@ -3,6 +3,7 @@ package ACDAT
 import (
 	"sort"
 	"fmt"
+	"unicode/utf8"
 )
 
 type Word struct {
@@ -11,6 +12,19 @@ type Word struct {
 
 func NewWord(word string) *Word {
 	return &Word{runes: []rune(word)}
+}
+
+func NewWordWithBytes(word []byte) *Word {
+	var runes []rune
+	for i := 0; i < len(word); {
+		r, size := utf8.DecodeRune(word[i:])
+		if r == utf8.RuneError {
+			break
+		}
+		runes = append(runes, r)
+		i += size
+	}
+	return &Word{runes: runes}
 }
 
 func (w *Word)GetWord() string {
@@ -66,7 +80,7 @@ func (d *WordCodeDict) Code(word rune) int {
 		return code
 	}
 	// 返回一个非法值
-	return d.nextCode
+	return 0
 }
 
 type AhoCorasickDoubleArrayTrie struct {
@@ -94,12 +108,15 @@ func NewAhoCorasickDoubleArrayTrie() *AhoCorasickDoubleArrayTrie {
 }
 
 func (act *AhoCorasickDoubleArrayTrie) ParseText(key string) []*Hit {
+	return act.parseText(NewWord(key))
+}
+
+func (act *AhoCorasickDoubleArrayTrie) parseText(w *Word) []*Hit {
 	var position int = 1
 	var curState int = 0
 	var collectedEmits = NewListHit()
-	text := NewWord(key)
-	for i := 0; i < text.Size(); i++ {
-		c := act.wordCodeDict.Code(text.GetRune(i))
+	for i := 0; i < w.Size(); i++ {
+		c := act.wordCodeDict.Code(w.GetRune(i))
 		curState = act.getState(curState, c)
 		act.storeEmits(position, curState, collectedEmits)
 		position++
@@ -107,12 +124,11 @@ func (act *AhoCorasickDoubleArrayTrie) ParseText(key string) []*Hit {
 	return collectedEmits.ListArray()
 }
 
-func (act *AhoCorasickDoubleArrayTrie) ParseTextWithIter(key string, iter IHit) {
+func (act *AhoCorasickDoubleArrayTrie) parseTextWithIter(w *Word, iter IHit) {
 	var position int = 1
 	var curState int = 0
-	text := NewWord(key)
-	for i := 0; i < text.Size(); i++ {
-		c := act.wordCodeDict.Code(text.GetRune(i))
+	for i := 0; i < w.Size(); i++ {
+		c := act.wordCodeDict.Code(w.GetRune(i))
 		curState = act.getState(curState, c)
 		hitArray := act.output[curState]
 		for _, hit := range hitArray {
@@ -120,6 +136,18 @@ func (act *AhoCorasickDoubleArrayTrie) ParseTextWithIter(key string, iter IHit) 
 		}
 		position++
 	}
+}
+
+func (act *AhoCorasickDoubleArrayTrie) ParseTextWithIter(key string, iter IHit) {
+	act.parseTextWithIter(NewWord(key), iter)
+}
+
+func (act *AhoCorasickDoubleArrayTrie) ParseBytes(key []byte) []*Hit {
+	return act.parseText(NewWordWithBytes(key))
+}
+
+func (act *AhoCorasickDoubleArrayTrie) ParseBytesWithIter(key []byte, iter IHit) {
+	act.parseTextWithIter(NewWordWithBytes(key), iter)
 }
 
 func (act *AhoCorasickDoubleArrayTrie) Matches(key string) bool {

@@ -22,7 +22,7 @@ func main() {
 	acdat.Dump()
 	v := acdat.Get("his")
 	fmt.Println("get ", v)
-	hits := acdat.ParseText("uhers")
+	hits := acdat.ParseText("u2342hers")
 	for _, hit := range hits {
 		fmt.Println(hit)
 	}
